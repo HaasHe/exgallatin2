@@ -1,0 +1,737 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "labName": {
+      "type": "string",
+      "defaultValue": "exLab01",
+      "minLength": 3,
+      "maxLength": 10,
+      "metadata": {
+        "description": "Short lab name to be pre-pended to the start of all resource names (3-10 characters only)"
+      }
+    },
+    "adDomainName": {
+      "type": "string",
+      "defaultValue": "arcadia.pub",
+      "metadata": {
+        "description": "Fully qualified domain name for Active Directory and Office 365 (must be a valid external domain not already assigned to a tenant)"
+      }
+    },
+    "labAdminUserName": {
+      "type": "string",
+      "defaultValue": "labadmin",
+      "metadata": {
+        "description": "Administrative username used for all lab servers and Active Directory domain"
+      }
+    },
+    "labAdminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Administrative password used for all lab servers and Active Directory domain"
+      }
+    },
+    "ExchangeProductKey": {
+      "type": "string",
+      "defaultValue": "12345-12345-12345-12345",
+      "metadata": {
+        "description": "Exchange Server 2013/2016 Product Key"
+      }
+    },
+    
+    "vNetPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.0.0/16",
+      "metadata": {
+        "description": "IP address space for virtual network"
+      }
+    },
+    "SubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.0.0/24",
+      "metadata": {
+        "description": "IP address space for subnet"
+      }
+    },
+    "DomainControllerVMSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2",
+      "allowedValues": [
+        "Standard_D2"
+      ],
+      "metadata": {
+        "description": "Domain Controller VM Size"
+      }
+    },
+    "ExchangeVMSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2",
+      "allowedValues": [
+        "Standard_D2"
+      ],
+      "metadata": {
+        "description": "Exchange VM Size"
+      }
+    }
+  },
+  "variables": {
+   
+
+    "_artifactsLocation": "https://raw.githubusercontent.com/HaasHe/exgallatin/master",
+    "_artifactsLocationSasToken": "",
+    "exLab01vnetTemplate": "vnet.json",
+    "exLab01vnetwithdnsTemplate": "vnet-with-dns-server.json",
+
+    "exLab01Name": "[concat(parameters('labName'), uniqueString(resourceGroup().id))]",
+    "exLab01Subnet1Name": "Subnet-1",
+    "adDomainDN": "[concat('DC=',replace(parameters('adDomainName'),'.',',DC='))]",
+    "adDomainNetbios": "[split(parameters('adDomainName'),'.')[0]]",
+    "exLab01DomainJoinOptions": "3",
+    "exLab01vnet01Name": "[concat(parameters('labName'), 'vnet01')]",
+    "exLab01Type": "Standard_LRS",
+
+    "DeployADForestConfigurationScript": "DeployADForestConfiguration.ps1",
+    "DeployADForestConfigurationScriptFunction": "Main",
+    "InstallExchange2013ConfigurationScript": "InstallExchange2013Configuration.ps1",
+    "InstallExchange2013ConfigurationScriptFunction": "Main",
+    "SourcePathAADConnect": "https://download.microsoft.com/download/B/0/0/B00291D0-5A83-4DE7-86F5-980BC00DE05A/AzureADConnect.msi",
+    "TargetPathAADConnect": "AzureADConnect.msi",
+    "SourcePathSignInAssistant": "https://download.microsoft.com/download/5/0/1/5017D39B-8E29-48C8-91A8-8D0E4968E6D4/en/msoidcli_64.msi",
+    "TargetPathSignInAssistant": "msoidcli_64.msi",
+    "GUIDSignInAssistant": "D8AB93B0-6FBF-44A0-971F-C0669B5AE6DD",
+    "SourcePathAADPS": "https://bposast.vo.msecnd.net/MSOPMW/Current/amd64/AdministrationConfig-en.msi",
+    "TargetPathAADPS": "AdministrationConfig-en.msi",
+    "ExchangeFQDN": "[concat(variables('exLab01exch01Name'), '.', parameters('adDomainName'))]",
+
+    "exLab01adds01Name": "[concat(parameters('labName'), 'adds01')]",
+    "exLab01adds01WindowsOSVersion": "2012-R2-Datacenter",
+    "exLab01adds01ImagePublisher": "MicrosoftWindowsServer",
+    "exLab01adds01ImageOffer": "WindowsServer",
+    "exLab01adds01OSDiskName": "[concat(variables('exLab01adds01Name'), 'OSDisk')]",
+    "exLab01adds01DataDiskName": "[concat(variables('exLab01adds01Name'), 'DataDisk')]",
+    "exLab01adds01DataDiskSize": "20",
+    "exLab01adds01VnetID": "[resourceId('Microsoft.Network/virtualNetworks', variables('exLab01vnet01Name'))]",
+    "exLab01adds01SubnetRef": "[concat(variables('exLab01adds01VnetID'), '/subnets/', variables('exLab01Subnet1Name'))]",
+    "exLab01adds01StorageAccountContainerName": "vhds",
+    "exLab01adds01NicName": "[concat(variables('exLab01adds01Name'), 'NetworkInterface')]",
+    "exLab01adds01IPAddress": "[substring(replace(parameters('SubnetPrefix'),'.0/','.4/'),0,sub(length(parameters('SubnetPrefix')),3))]",
+    "exLab01adds01PublicName": "[concat(variables('exLab01adds01Name'), 'Public')]",
+    "exLab01adds01PublicDnsName": "[variables('exLab01adds01Name')]",
+
+    "exLab01exch01Name": "[concat(parameters('labName'), 'exch01')]",
+    "exLab01exch01WindowsOSVersion": "2012-R2-Datacenter",
+    "exLab01exch01ImagePublisher": "MicrosoftWindowsServer",
+    "exLab01exch01ImageOffer": "WindowsServer",
+    "exLab01exch01OSDiskName": "[concat(variables('exLab01exch01Name'), 'OSDisk')]",
+    "exLab01exch01DataDiskName": "[concat(variables('exLab01exch01Name'), 'DataDisk')]",
+    "exLab01exch01DataDiskSize": "20",
+    "exLab01exch01VnetID": "[resourceId('Microsoft.Network/virtualNetworks', variables('exLab01vnet01Name'))]",
+    "exLab01exch01SubnetRef": "[concat(variables('exLab01exch01VnetID'), '/subnets/', variables('exLab01Subnet1Name'))]",
+    "exLab01exch01StorageAccountContainerName": "vhds",
+    "exLab01exch01NicName": "[concat(variables('exLab01exch01Name'), 'NetworkInterface')]",
+    "exLab01exch01PublicName": "[concat(variables('exLab01exch01Name'), 'Public')]",
+    "exLab01exch01PublicDnsName": "[variables('exLab01exch01Name')]",
+    "exLab01exch01NSGName": "[concat(variables('exLab01exch01Name'), 'NSG')]"
+  },
+  "resources": [
+    {
+      "name": "[variables('exLab01Name')]",
+      "type": "Microsoft.Storage/storageAccounts",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "exLab01"
+      },
+      "properties": {
+        "accountType": "[variables('exLab01Type')]"
+      }
+    },
+    {
+      "name": "exLab01vnet01",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2015-01-01",
+      "properties": {
+        "mode": "Incremental",
+        "templateLink": {
+          "uri": "[concat(variables('_artifactsLocation'), '/', variables('exLab01vnetTemplate'), variables('_artifactsLocationSasToken'))]",
+          "contentVersion": "1.0.0.0"
+        },
+        "parameters": {
+          "location": {
+            "value": "[resourceGroup().location]"
+          },
+          "virtualNetworkName": {
+            "value": "[variables('exLab01vnet01Name')]"
+          },
+          "virtualNetworkAddressRange": {
+            "value": "[parameters('vNetPrefix')]"
+          },
+          "subnetName": {
+            "value": "[variables('exLab01Subnet1Name')]"
+          },
+          "subnetRange": {
+            "value": "[parameters('SubnetPrefix')]"
+          }
+        }
+      }
+    },
+    {
+      "name": "[variables('exLab01adds01PublicName')]",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "exLab01adds01Public"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('exLab01adds01PublicDnsName')]"
+        }
+      }
+    },
+    {
+      "name": "[variables('exLab01adds01NicName')]",
+      "type": "Microsoft.Network/networkInterfaces",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [
+        "Microsoft.Resources/deployments/exLab01vnet01",
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('exLab01adds01PublicName'))]"
+      ],
+      "tags": {
+        "displayName": "exLab01adds01Nic"
+      },
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Static",
+              "privateIPAddress": "[variables('exLab01adds01IPAddress')]",
+              "subnet": {
+                "id": "[variables('exLab01adds01SubnetRef')]"
+              },
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('exLab01adds01PublicName'))]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "[variables('exLab01adds01Name')]",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [
+        "[concat('Microsoft.Storage/storageAccounts/', variables('exLab01Name'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('exLab01adds01NicName'))]",
+        "Microsoft.Resources/deployments/exLab01vnet01"
+      ],
+      "tags": {
+        "displayName": "exLab01adds01"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('DomainControllerVMSize')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('exLab01adds01Name')]",
+          "adminUsername": "[parameters('labAdminUserName')]",
+          "adminPassword": "[parameters('labAdminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('exLab01adds01ImagePublisher')]",
+            "offer": "[variables('exLab01adds01ImageOffer')]",
+            "sku": "[variables('exLab01adds01WindowsOSVersion')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "exLab01adds01OSDisk",
+            "vhd": {
+              "uri": "[concat('https://', variables('exLab01Name'), '.blob.core.chinacloudapi.cn/', variables('exLab01adds01StorageAccountContainerName'), '/', variables('exLab01adds01OSDiskName'), '.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          },
+          "dataDisks": [
+            {
+              "name": "exLab01adds01DataDisk",
+              "vhd": {
+                "uri": "[concat('https://', variables('exLab01Name'), '.blob.core.chinacloudapi.cn/', variables('exLab01adds01StorageAccountContainerName'), '/', variables('exLab01adds01DataDiskName'), '.vhd')]"
+              },
+              "caching": "None",
+              "createOption": "Empty",
+              "diskSizeGB": "[variables('exLab01adds01DataDiskSize')]",
+              "lun": 0
+            }
+          ]
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('exLab01adds01NicName'))]"
+            }
+          ]
+        }
+      },
+      "resources": [
+        {
+          "name": "DeployADForest",
+          "type": "extensions",
+          "location": "[resourceGroup().location]",
+          "apiVersion": "2015-06-15",
+          "dependsOn": [
+            "[concat('Microsoft.Compute/virtualMachines/', variables('exLab01adds01Name'))]"
+          ],
+          "tags": {
+            "displayName": "DeployADForest"
+          },
+          "properties": {
+            "publisher": "Microsoft.Powershell",
+            "type": "DSC",
+            "typeHandlerVersion": "2.17",
+            "autoUpgradeMinorVersion": true,
+            "settings": {
+              "wmfVersion": "latest",
+              "configuration": {
+                "url": "[concat(variables('_artifactsLocation'), '/', 'dsc.zip')]",
+                "script": "[variables('DeployADForestConfigurationScript')]",
+                "function": "[variables('DeployADForestConfigurationScriptFunction')]"
+              },
+              "configurationArguments": {
+                "domainName": "[parameters('adDomainName')]",
+                "domainNameNetbios": "[variables('adDomainNetbios')]",
+                "domainDN": "[variables('adDomainDN')]",
+                "SourcePathAADConnect": "[variables('SourcePathAADConnect')]",
+                "TargetPathAADConnect": "[variables('TargetPathAADConnect')]"
+              },
+              "configurationData": {
+              },
+              "privacy": {
+                "dataCollection": "enable"
+              }
+            },
+            "protectedSettings": {
+              "configurationArguments": {
+                "AdminCredential": {
+                  "userName": "[parameters('labAdminUserName')]",
+                  "password": "[parameters('labAdminPassword')]"
+                }
+              },
+              "configurationUrlSasToken": "[variables('_artifactsLocationSasToken')]"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "exLab01vnet01-with-dns-server",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2015-01-01",
+      "dependsOn": [
+        "[concat('Microsoft.Compute/virtualMachines/', variables('exLab01adds01name'),'/extensions/DeployADForest')]"
+      ],
+      "properties": {
+        "mode": "Incremental",
+        "templateLink": {
+          "uri": "[concat(variables('_artifactsLocation'), '/', variables('exLab01vnetwithdnsTemplate'), variables('_artifactsLocationSasToken'))]",
+          "contentVersion": "1.0.0.0"
+        },
+        "parameters": {
+          "location": {
+            "value": "[resourceGroup().location]"
+          },
+          "virtualNetworkName": {
+            "value": "[variables('exLab01vnet01Name')]"
+          },
+          "virtualNetworkAddressRange": {
+            "value": "[parameters('vNetPrefix')]"
+          },
+          "subnetName": {
+            "value": "[variables('exLab01Subnet1Name')]"
+          },
+          "subnetRange": {
+            "value": "[parameters('SubnetPrefix')]"
+          },
+          "DNSServerAddress": {
+            "value": [
+              "[variables('exLab01adds01IPAddress')]"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "[variables('exLab01exch01PublicName')]",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [ ],
+      "tags": {
+        "displayName": "exLab01exch01Public"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Static",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('exLab01exch01PublicDnsName')]"
+        }
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "name": "[variables('exLab01exch01NSGName')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "exLab01exch01NSGName"
+      },
+      "properties": {
+        "securityRules": [
+          {
+            "name": "rdp-rule",
+            "properties": {
+              "description": "Allow RDP",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "3389",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 100,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "web-rule",
+            "properties": {
+              "description": "Allow WEB",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "443",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 110,
+              "direction": "Inbound"
+            }
+          },
+          {
+            "name": "smtp-rule",
+            "properties": {
+              "description": "Allow SMTP",
+              "protocol": "Tcp",
+              "sourcePortRange": "*",
+              "destinationPortRange": "25",
+              "sourceAddressPrefix": "Internet",
+              "destinationAddressPrefix": "*",
+              "access": "Allow",
+              "priority": 120,
+              "direction": "Inbound"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "[variables('exLab01exch01NicName')]",
+      "type": "Microsoft.Network/networkInterfaces",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [
+        "[concat('Microsoft.Network/networkInterfaces/', variables('exLab01adds01NicName'))]",
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('exLab01exch01PublicName'))]",
+        "Microsoft.Resources/deployments/exLab01vnet01-with-dns-server",
+        "[concat('Microsoft.Network/networkSecurityGroups/', variables('exLab01exch01NSGName'))]"
+      ],
+      "tags": {
+        "displayName": "exLab01exch01Nic"
+      },
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('exLab01exch01SubnetRef')]"
+              },
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('exLab01exch01PublicName'))]"
+              }
+
+            }
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/NetworkSecurityGroups', variables('exLab01exch01NSGName'))]"
+        }
+      }
+
+    },
+    {
+      "name": "[variables('exLab01exch01Name')]",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "dependsOn": [
+        "[concat('Microsoft.Storage/storageAccounts/', variables('exLab01Name'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('exLab01exch01NicName'))]",
+        "[concat('Microsoft.Compute/virtualMachines/', variables('exLab01adds01name'),'/extensions/DeployADForest')]"
+      ],
+      "tags": {
+        "displayName": "exLab01exch01"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('ExchangeVMSize')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('exLab01exch01Name')]",
+          "adminUsername": "[parameters('labAdminUserName')]",
+          "adminPassword": "[parameters('labAdminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('exLab01exch01ImagePublisher')]",
+            "offer": "[variables('exLab01exch01ImageOffer')]",
+            "sku": "[variables('exLab01exch01WindowsOSVersion')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "exLab01exch01OSDisk",
+            "vhd": {
+              "uri": "[concat('https://', variables('exLab01Name'), '.blob.core.chinacloudapi.cn/', variables('exLab01exch01StorageAccountContainerName'), '/', variables('exLab01exch01OSDiskName'), '.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          },
+          "dataDisks": [
+            {
+              "name": "exLab01exch01DataDisk",
+              "vhd": {
+                "uri": "[concat('https://', variables('exLab01Name'), '.blob.core.chinacloudapi.cn/', variables('exLab01exch01StorageAccountContainerName'), '/', variables('exLab01exch01DataDiskName'), '.vhd')]"
+              },
+              "caching": "None",
+              "createOption": "Empty",
+              "diskSizeGB": "[variables('exLab01exch01DataDiskSize')]",
+              "lun": 0
+            }
+          ]
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('exLab01exch01NicName'))]"
+            }
+          ]
+        }
+      },
+      "resources": [
+        {
+          "apiVersion": "2015-06-15",
+          "type": "extensions",
+          "name": "joindomain",
+          "location": "[resourceGroup().location]",
+          "tags": {
+            "displayName": "joindomain"
+          },
+          "dependsOn": [
+            "[concat('Microsoft.Compute/virtualMachines/', variables('exLab01exch01Name'))]",
+            "[concat('Microsoft.Compute/virtualMachines/', variables('exLab01adds01name'),'/extensions/DeployADForest')]"
+          ],
+          "properties": {
+            "publisher": "Microsoft.Compute",
+            "type": "JsonADDomainExtension",
+            "typeHandlerVersion": "1.0",
+            "settings": {
+              "Name": "[parameters('adDomainName')]",
+              "OUPath": "[concat('OU=Servers,', variables('adDomainDN'))]",
+              "User": "[concat(parameters('labAdminUserName'), '@', parameters('adDomainName'))]",
+              "Restart": "true",
+              "Options": "[variables('exLab01DomainJoinOptions')]"
+            },
+            "protectedsettings": {
+              "Password": "[parameters('labAdminPassword')]"
+            }
+          }
+        },
+        {
+          "name": "InstallExchange2013",
+          "type": "extensions",
+          "location": "[resourceGroup().location]",
+          "apiVersion": "2015-06-15",
+          "dependsOn": [
+            "[concat('Microsoft.Compute/virtualMachines/', variables('exLab01exch01Name'))]",
+            "[concat('Microsoft.Compute/virtualMachines/', variables('exLab01exch01Name'), '/extensions/joindomain')]"
+          ],
+          "tags": {
+            "displayName": "InstallExchange2013"
+          },
+          "properties": {
+            "publisher": "Microsoft.Powershell",
+            "type": "DSC",
+            "typeHandlerVersion": "2.18",
+            "autoUpgradeMinorVersion": false,
+            "settings": {
+              "wmfVersion": "4.0",
+              "configuration": {
+                "url": "[concat(variables('_artifactsLocation'), '/', 'dsc.zip')]",
+                "script": "[variables('InstallExchange2013ConfigurationScript')]",
+                "function": "[variables('InstallExchange2013ConfigurationScriptFunction')]"
+              },
+              "configurationArguments": {
+                "domainName": "[parameters('adDomainName')]",
+                "domainNameNetbios": "[variables('adDomainNetbios')]",
+                "ExchangeOrgName": "[parameters('labName')]",
+                "ExchangeProductKey": "[parameters('ExchangeProductKey')]",
+                "ExchangeFQDN": "[variables('ExchangeFQDN')]",
+                "SourcePathSignInAssistant": "[variables('SourcePathSignInAssistant')]",
+                "targetPathSignInAssistant": "[variables('TargetPathSignInAssistant')]",
+                "GUIDSignInAssistant": "[variables('GUIDSignInAssistant')]",
+                "SourcePathAADPS": "[variables('SourcePathAADPS')]",
+                "TargetPathAADPS": "[variables('TargetPathAADPS')]",
+                "PublicZoneNS1": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[0]]",
+                "PublicZoneNS2": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[1]]",
+                "PublicZoneNS3": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[2]]",
+                "PublicZoneNS4": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[3]]"
+              },
+              "configurationData": {
+              },
+              "privacy": {
+                "dataCollection": "enable"
+              }
+            },
+            "protectedSettings": {
+              "configurationArguments": {
+                "AdminCredential": {
+                  "userName": "[parameters('labAdminUserName')]",
+                  "password": "[parameters('labAdminPassword')]"
+                }
+              },
+              "configurationUrlSasToken": "[variables('_artifactsLocationSasToken')]"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones",
+      "name": "[parameters('adDomainName')]",
+      "apiVersion": "2015-05-01",
+      "location": "chinaeast",
+      "tags": {
+        "displayName": "PublicDNSZone"
+      },
+      "properties": { }
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('adDomainName'), '/autodiscover')]",
+      "apiVersion": "2015-05-01",
+      "location": "chinaeast",
+      "tags": {
+        "displayName": "PublicDNS-Autodiscover"
+      },
+      "properties": {
+        "TTL": 3600,
+        "CNAMERecord": {
+          "cname": "[reference(resourceId('Microsoft.Network/publicIPAddresses', variables('exLab01exch01PublicName'))).dnsSettings.fqdn]"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('adDomainName'), '/msoid')]",
+      "apiVersion": "2015-05-01",
+      "location": "chinaeast",
+      "tags": {
+        "displayName": "PublicDNS-msoid"
+      },
+      "properties": {
+        "TTL": 3600,
+        "CNAMERecord": {
+          "cname": "clientconfig.partner.microsoftonline-p.net.cn"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnszones/CNAME",
+      "name": "[concat(parameters('adDomainName'), '/', variables('exLab01exch01Name'))]",
+      "apiVersion": "2015-05-01",
+      "location": "chinaeast",
+      "tags": {
+        "displayName": "PublicDNS-ExchangeServer"
+      },
+      "properties": {
+        "TTL": 3600,
+        "CNAMERecord": {
+          "cname": "[reference(resourceId('Microsoft.Network/publicIPAddresses', variables('exLab01exch01PublicName'))).dnsSettings.fqdn]"
+        }
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]"
+      ]
+    },
+    
+   
+
+
+    {
+      "type": "Microsoft.Network/dnszones/TXT",
+      "name": "[concat(parameters('adDomainName'),'/@')]",
+      "apiVersion": "2015-05-04-preview",
+      "location": "chinaeast",
+      "tags": {
+        "displayName": "PublicDNS-TXT"
+      },
+      "properties": {
+        "TTL": 3600,
+        "TXTRecords": [
+          {
+            "value": "[concat('v=spf1 include:spf.protection..partner.outlook.cn ip4:', reference(resourceId('Microsoft.Network/publicIPAddresses', variables('exLab01exch01PublicName'))).ipAddress, ' -all')]"
+          },
+          
+        ]
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/dnszones/', parameters('adDomainName'))]",
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('exLab01exch01PublicName'))]"
+      ]
+    }
+  ],
+
+    "outputs": {
+      "DNS-Name-Server-1": {
+        "type": "string",
+        "value": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[0]]"
+      },
+      "DNS-Name-Server-2": {
+        "type": "string",
+        "value": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[1]]"
+      },
+      "DNS-Name-Server-3": {
+        "type": "string",
+        "value": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[2]]"
+      },
+      "DNS-Name-Server-4": {
+        "type": "string",
+        "value": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('adDomainName'))).nameServers[3]]"
+      },
+      "Exchange-External-Address": {
+        "type": "string",
+        "value": "[concat(variables('exLab01exch01Name'), '.', parameters('adDomainName'))]"
+      }
+    }
+  }
